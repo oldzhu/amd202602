@@ -12,27 +12,6 @@ from aiter import ActivationType, QuantType
 from aiter.fused_moe import fused_moe  # FIX: Import fused_moe directly!
 
 
-_PADDING_CACHE: dict[tuple[int, int, int, int], tuple[int, int]] = {}
-
-
-def _get_padding(config: dict) -> tuple[int, int]:
-    """Cache derived padding values for repeated benchmark configs."""
-    cache_key = (
-        config["d_hidden"],
-        config["d_hidden_pad"],
-        config["d_expert"],
-        config["d_expert_pad"],
-    )
-    cached = _PADDING_CACHE.get(cache_key)
-    if cached is None:
-        cached = (
-            config["d_hidden_pad"] - config["d_hidden"],
-            config["d_expert_pad"] - config["d_expert"],
-        )
-        _PADDING_CACHE[cache_key] = cached
-    return cached
-
-
 def custom_kernel(data: input_t) -> output_t:
     """
     MoE Layer with MXFP4 quantized weights using AITER fused_moe.
@@ -65,14 +44,12 @@ def custom_kernel(data: input_t) -> output_t:
         config,
     ) = data
 
-    hidden_pad, intermediate_pad = _get_padding(config)
+    hidden_pad = config["d_hidden_pad"] - config["d_hidden"]
+    intermediate_pad = config["d_expert_pad"] - config["d_expert"]
 
-    if not hidden_states.is_contiguous():
-        hidden_states = hidden_states.contiguous()
-    if not topk_weights.is_contiguous():
-        topk_weights = topk_weights.contiguous()
-    if not topk_ids.is_contiguous():
-        topk_ids = topk_ids.contiguous()
+    hidden_states = hidden_states.contiguous()
+    topk_weights = topk_weights.contiguous()
+    topk_ids = topk_ids.contiguous()
 
     return fused_moe(
         hidden_states,

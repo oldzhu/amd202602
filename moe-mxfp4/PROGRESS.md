@@ -85,10 +85,15 @@
 - **结果**: 预期可以降低重复 benchmark 形状下的调用准备开销，同时不改变数值结果。
 
 ### Profile Measurement
-- **Before**: ~180 us leaderboard score on 2026-03-28
-- **After**: Pending rerun
-- **Improvement**: Pending measurement; expected to be modest because kernel math is unchanged
-- **Leaderboard Rank**: Pending rerun
+- **Before**: Public best 180.445 us / rank #125; current wrapper benchmarked at 184.736 us geometric mean
+- **After**: Reverted simpler wrapper benchmarked at 182.720 us geometric mean
+- **Improvement**: The cached-padding/conditional-contiguous wrapper was not a win; reverting to the simpler baseline recovered about 1.1% benchmark geometric mean but still did not beat the public best
+- **Leaderboard Rank**: Not resubmitted after revert; public best remains 180.445 us
+
+### Follow-up Result
+- **Current-wrapper benchmark**: 141, 222, 255, 94.4, 129, 214, 353 us
+- **Reverted baseline benchmark**: 138, 219, 251, 93.5, 128, 214, 350 us
+- **Decision**: Keep the simpler baseline and treat the padding cache plus conditional `.contiguous()` normalization as a rejected micro-optimization
 
 ## Change: Initial implementation based on reference kernel
 
