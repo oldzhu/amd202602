@@ -14,9 +14,15 @@
 
 ### Profile Measurement
 - **Before**: 24.31 us leaderboard score on 2026-03-28
-- **After**: Pending rerun
-- **Improvement**: Pending measurement; expected to be small because compute path is unchanged
-- **Leaderboard Rank**: Pending rerun
+- **After**: 22.668 us benchmark geometric mean on remote benchmark; public score stayed at 24.001 us
+- **Improvement**: 5.6% lower benchmark geometric mean versus the current public score, but no public leaderboard improvement observed
+- **Leaderboard Rank**: Still #214 after submission 670749
+
+### Follow-up Result
+- **Benchmark Cases**: 18.9, 33.6, 19.4, 19.3, 24.7, 23.1 us
+- **Leaderboard Submission**: 670749
+- **Public Outcome**: No improvement; public best remained 24.001 us on submission 660523 at rank #214
+- **Decision**: Keep the simplified hot path because it benchmarks better locally/remotely, but do not expect it to move the public rank by itself
 
 ## Change: Match reference implementation
 
@@ -38,6 +44,9 @@
 |------|------|--------|------|-------|
 | 2026-03-27 | test | pass | - | Initial submission |
 | 2026-03-28 | leaderboard | ✅ | 24.31 μs | Geometric mean |
+| 2026-03-30 | test | pass (4/4) | ~3min | Simplified hot path without redundant B handling |
+| 2026-03-30 | benchmark | pass | ~4min | Benchmark gm improved to 22.668 us |
+| 2026-03-30 | leaderboard | pass | ~4min | Public best unchanged at 24.001 us |
 
 ## Benchmark Results
 
@@ -45,6 +54,8 @@
 |------|------|--------|-----------|-------|
 | 2026-03-28 | leaderboard | ✅ | 24.31 | Initial public rank snapshot |
 | 2026-03-29 | api-check | ✅ | 24.001 | Verified public score for submission 660523 |
+| 2026-03-30 | benchmark | ✅ | 22.668 | Simplified hot-path candidate |
+| 2026-03-30 | leaderboard | ✅ | 24.001 | Submission 670749; public best unchanged |
 
 **Leaderboard Rank:** #209 (verified 2026-03-29 via public API)
 - Top 10: 8.365 μs

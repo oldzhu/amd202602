@@ -1,5 +1,41 @@
 # PROGRESS.md - Mixed-MLA
 
+## Change: Rejected more aggressive split reductions after the 16/24/32 baseline
+
+### English
+- **What**: Tested two follow-up split heuristics on top of the current preallocated-Q baseline: an `8/16/24/32` style schedule for the smallest cases, and then a milder `16/20/32` mid-range schedule.
+- **Why**: After the successful `16/24/32` heuristic, the next obvious question was whether even fewer splits could keep the ranked small-case gains while trimming more reduction overhead.
+- **Result**: Rejected both. The `8`-split path badly regressed the `bs=4, kv=8192` case, and the `20`-split mid-range variant gave back too much on the broader matrix. The current `16/24/32` heuristic remains the best measured schedule.
+
+### 中文
+- **内容**: 在当前预分配 Q 缓冲区基线上继续测试了两种更激进的 split 策略：一种是在最小 case 上使用 `8/16/24/32` 风格的分配，另一种是更温和的 `16/20/32` 中间档策略。
+- **原因**: 在 `16/24/32` 策略已经成功之后，下一步自然是验证更少的 splits 能否在保持小 case 收益的同时进一步减少 reduce 开销。
+- **结果**: 两种方案都被放弃。`8`-split 路径在 `bs=4, kv=8192` 上明显退化，而 `20`-split 的中档方案在整体矩阵上也回吐了过多收益。当前 `16/24/32` 仍然是已测到的最佳 split 调度。
+
+### Profile Measurement
+- **Before**: 75.247 us benchmark geometric mean on the `16/24/32` baseline; public score 77.695 us / rank #80
+- **After**: 77.645 us gm on the `8/16/24/32` attempt; 76.978 us gm on the `16/20/32` attempt
+- **Improvement**: None; both candidates regressed versus the current baseline by 3.2% and 2.3%, respectively
+- **Leaderboard Rank**: Not submitted; both candidates reverted after benchmark
+
+## Change: Rejected in-place FP8 scale clamping on the cached quant buffer
+
+### English
+- **What**: Tried replacing the cached FP8 scale post-processing step `scale.clamp_min(...).reshape(1)` with an in-place `clamp_min_` on the cached 1-element scale tensor.
+- **Why**: Even after preallocating the FP8 output and scale buffers, the non-mutating clamp path still looked like a possible per-call allocation worth removing.
+- **Result**: Rejected. Remote `test` still passed, but benchmark geometric mean regressed, so the previous non-mutating scale path remains the best measured implementation.
+
+### 中文
+- **内容**: 尝试把缓存 FP8 scale 的后处理从 `scale.clamp_min(...).reshape(1)` 改成对缓存的单元素 scale 张量做原地 `clamp_min_`。
+- **原因**: 即使已经预分配了 FP8 输出和 scale 缓冲区，非原地 clamp 路径看起来仍可能引入每次调用的额外分配，因此值得验证是否能继续去掉。
+- **结果**: 已放弃。远端 `test` 仍然通过，但 benchmark 几何平均反而退化，因此此前的非原地 scale 路径仍然是当前测到的更优实现。
+
+### Profile Measurement
+- **Before**: 75.247 us benchmark geometric mean on the `16/24/32` baseline; public score 77.695 us / rank #80
+- **After**: 76.863 us benchmark geometric mean on the in-place-clamp attempt
+- **Improvement**: None; candidate regressed by 2.1% versus the current baseline
+- **Leaderboard Rank**: Not submitted; reverted after benchmark
+
 ## Change: Reintroduce adaptive MLA KV splits on the preallocated-Q baseline
 
 ### English
