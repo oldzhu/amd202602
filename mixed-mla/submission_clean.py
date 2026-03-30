@@ -144,6 +144,16 @@ def _get_output_buffer(shape: tuple[int, int, int], device: torch.device) -> tor
     return cached
 
 
+def _select_num_kv_splits(batch_size: int, kv_seq_len: int) -> int:
+    """Use fewer splits on mid-sized decode batches while keeping the largest cases at 32 splits."""
+    total_kv = batch_size * kv_seq_len
+    if total_kv >= 1_000_000:
+        return 32
+    if total_kv >= 131_072:
+        return 24
+    return 16
+
+
 def make_mla_decode_metadata(
     batch_size: int,
     max_q_len: int,
@@ -267,6 +277,8 @@ def custom_kernel(data: input_t) -> output_t:
 
     max_q_len = q_seq_len
 
+    num_kv_splits = _select_num_kv_splits(batch_size, kv_seq_len)
+
     meta = make_mla_decode_metadata(
         batch_size,
         max_q_len,
@@ -278,7 +290,7 @@ def custom_kernel(data: input_t) -> output_t:
         qo_indptr,
         kv_indptr,
         kv_last_page_len,
-        num_kv_splits=NUM_KV_SPLITS,
+        num_kv_splits=num_kv_splits,
     )
 
     o = _get_output_buffer((q.shape[0], nq, dv), q.device)
@@ -296,7 +308,7 @@ def custom_kernel(data: input_t) -> output_t:
         nhead_kv=nkv,
         sm_scale=SM_SCALE,
         logit_cap=0.0,
-        num_kv_splits=NUM_KV_SPLITS,
+        num_kv_splits=num_kv_splits,
         q_scale=q_scale,
         kv_scale=kv_scale,
         intra_batch_mode=True,

@@ -1,5 +1,29 @@
 # PROGRESS.md - Mixed-MLA
 
+## Change: Reintroduce adaptive MLA KV splits on the preallocated-Q baseline
+
+### English
+- **What**: Added a lightweight `num_kv_splits` heuristic on top of the preallocated FP8 Q-buffer path, using fewer splits for mid-sized decode workloads and keeping 32 splits for the very largest total-KV cases.
+- **Why**: The preallocated quantization change made the smaller decode cases much faster, but the largest batch cases were still lagging. Split scheduling was the next remaining wrapper-level lever with measurable headroom.
+- **Result**: Remote `test` still passed, remote `benchmark` improved across all eight cases, and the public score improved again even though the public rank slipped by one place because the leaderboard moved underneath us.
+
+### 中文
+- **内容**: 在预分配 FP8 Q 缓冲区的基线上重新加入轻量级 `num_kv_splits` 自适应策略，对中等规模 decode workload 使用更少的 splits，而对最大的 total-KV case 继续保持 32 splits。
+- **原因**: 预分配量化缓冲区之后，小规模 case 已经明显加速，但最大 batch 的 case 仍然偏慢。split 调度仍然是包装层里少数还有可测空间的杠杆之一。
+- **结果**: 远端 `test` 继续全部通过，远端 `benchmark` 八个 case 全部改善，公开榜分数也再次下降；不过由于榜单整体变动，公开排名反而下降了一位。
+
+### Profile Measurement
+- **Before**: 77.319 us benchmark geometric mean on the preallocated-Q-buffer candidate; public best 79.374 us / rank #79
+- **After**: 75.247 us benchmark geometric mean on the adaptive-splits candidate; public score 77.695 us
+- **Improvement**: 2.7% lower benchmark geometric mean versus the prior baseline; public score improved by 2.1%
+- **Leaderboard Rank**: #80 after submission 670418
+
+### Follow-up Result
+- **Leaderboard Submission**: 670418
+- **Public Outcome**: Improved public score from 79.374 us to 77.695 us, while rank moved from #79 to #80 because other submissions also improved
+- **Ranked Cases**: 32.0, 39.2, 40.8, 87.6, 54.3, 140, 124, 315 us
+- **Decision**: Keep the adaptive split heuristic on top of the preallocated FP8 Q-buffer path as the new `mixed-mla` baseline
+
 ## Change: Reuse AITER dynamic FP8 Q output buffers by shape
 
 ### English
@@ -187,6 +211,9 @@
 | 2026-03-30 | test | pass (4/4) | ~12min | Preallocated FP8 Q output/scale buffers |
 | 2026-03-30 | benchmark | pass | ~9min | Benchmark gm improved to 77.319 us with cached FP8 quant buffers |
 | 2026-03-30 | leaderboard | pass | ~25min | Auto-retry after cooldown; public score improved to 79.374 us, rank #79 |
+| 2026-03-30 | test | pass (4/4) | ~6min | Adaptive KV split heuristic on preallocated-Q baseline |
+| 2026-03-30 | benchmark | pass | ~6min | Benchmark gm improved to 75.247 us with adaptive splits |
+| 2026-03-30 | leaderboard | pass | ~7min | Public score improved to 77.695 us; rank moved to #80 as the field improved |
 
 ## Benchmark Results
 
@@ -201,15 +228,17 @@
 | 2026-03-30 | leaderboard | ✅ | 56.1-315 | Adaptive split ranked benchmark; submission 667896, no public improvement |
 | 2026-03-30 | benchmark | ✅ | 29.5-320 | Preallocated FP8 quant-buffer candidate |
 | 2026-03-30 | leaderboard | ✅ | 31.7-321 | Ranked benchmark; submission 669136 |
+| 2026-03-30 | benchmark | ✅ | 28.8-314 | Adaptive-splits candidate on top of preallocated Q buffers |
+| 2026-03-30 | leaderboard | ✅ | 32.0-315 | Ranked benchmark; submission 670418 |
 
 **Best times:**
 - bs:4, kvseqlen:1024: 146 μs
 - bs:4, kvseqlen:8192: 152 μs
 - bs:32, kvseqlen:1024: 157 μs
 
-**Leaderboard Rank:** #79 (verified 2026-03-30 via public API)
-- Top 10: 37.165 μs
-- Our score: 79.374 μs (submission 669136)
+**Leaderboard Rank:** #80 (verified 2026-03-30 via public API)
+- Top 10: 34.770 μs
+- Our score: 77.695 μs (submission 670418)
 
 ## Gap Analysis
 - Rank 1: 26.66 μs
