@@ -1,5 +1,7 @@
 # 🔬 GPU Programming Concepts for Hackathon
 
+[中文版本](GPU_PROGRAMMING_BASICS.zh-CN.md)
+
 ## 📚 Essential Concepts You Need to Know
 
 This document explains the key GPU programming concepts you'll encounter in the hackathon.

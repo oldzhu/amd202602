@@ -1,5 +1,7 @@
 # 🎓 AMD GPU MODE Hackathon - Learning Path for Beginners
 
+[中文版本](hackathon_learning_path.zh-CN.md)
+
 ## 📚 Your Learning Journey
 
 This guide is designed for someone with **basic GPU programming concepts** to progress from understanding to implementation. We'll work through the problems from **simplest to most complex**.

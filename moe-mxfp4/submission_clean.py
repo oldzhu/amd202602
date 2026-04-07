@@ -47,9 +47,8 @@ def custom_kernel(data: input_t) -> output_t:
     hidden_pad = config["d_hidden_pad"] - config["d_hidden"]
     intermediate_pad = config["d_expert_pad"] - config["d_expert"]
 
-    hidden_states = hidden_states.contiguous()
-    topk_weights = topk_weights.contiguous()
-    topk_ids = topk_ids.contiguous()
+    M = topk_ids.shape[0]
+    block_size_m = 32 if M <= 256 else None
 
     return fused_moe(
         hidden_states,
@@ -58,8 +57,8 @@ def custom_kernel(data: input_t) -> output_t:
         topk_weights,
         topk_ids,
         expert_mask=None,
-        activation=ActivationType.Silu,      # SwiGLU: silu(gate) * up
-        quant_type=QuantType.per_1x32,       # MXFP4 block quantization
+        activation=ActivationType.Silu,
+        quant_type=QuantType.per_1x32,
         doweight_stage1=False,
         w1_scale=gate_up_weight_scale_shuffled,
         w2_scale=down_weight_scale_shuffled,
@@ -67,4 +66,5 @@ def custom_kernel(data: input_t) -> output_t:
         a2_scale=None,
         hidden_pad=hidden_pad,
         intermediate_pad=intermediate_pad,
+        block_size_M=block_size_m,
     )

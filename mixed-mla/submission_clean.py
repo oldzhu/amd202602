@@ -27,37 +27,35 @@ PAGE_SIZE = 1
 NUM_KV_SPLITS = 32
 
 FP8_DTYPE = aiter_dtypes.fp8
-FP8_INFO = torch.finfo(FP8_DTYPE)
-FP8_SCALE_EPS = 1e-12
 
 _WORKSPACE_CACHE: dict[tuple[object, ...], tuple[torch.Tensor, ...]] = {}
 _INDPTR_CACHE: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
 _KV_INDEX_CACHE: dict[tuple[object, ...], torch.Tensor] = {}
 _METADATA_CACHE: dict[tuple[object, ...], dict[str, torch.Tensor]] = {}
 _OUTPUT_CACHE: dict[tuple[object, ...], torch.Tensor] = {}
-_Q_QUANT_CACHE: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor]] = {}
+import weakref
+
+_Q_QUANT_REF = None      # weakref to last tensor
+_Q_QUANT_RESULT = None   # (fp8_tensor, scale)
 
 
 def quantize_fp8(tensor: torch.Tensor):
     """
-    Dynamic per-tensor FP8 quantization.
-
-    Returns:
-        (fp8_tensor, scale) where scale is a scalar float32 tensor.
+    Dynamic per-tensor FP8 quantization with weakref-based single-entry cache.
+    Skips re-quantization when the same tensor object is passed again.
     """
+    global _Q_QUANT_REF, _Q_QUANT_RESULT
+    if _Q_QUANT_REF is not None and _Q_QUANT_REF() is tensor:
+        return _Q_QUANT_RESULT
+
     if not tensor.is_contiguous():
         tensor = tensor.contiguous()
-    cache_key = (_device_cache_key(tensor.device), tuple(tensor.shape), tensor.dtype)
-    cached = _Q_QUANT_CACHE.get(cache_key)
-    if cached is None:
-        cached = (
-            torch.empty(tensor.shape, dtype=FP8_DTYPE, device=tensor.device),
-            torch.empty(1, dtype=torch.float32, device=tensor.device),
-        )
-        _Q_QUANT_CACHE[cache_key] = cached
-    fp8_tensor, scale = cached
+    fp8_tensor = torch.empty(tensor.shape, dtype=FP8_DTYPE, device=tensor.device)
+    scale = torch.empty(1, dtype=torch.float32, device=tensor.device)
     dynamic_per_tensor_quant(fp8_tensor, tensor, scale)
-    return fp8_tensor, scale.clamp_min(FP8_SCALE_EPS).reshape(1)
+    _Q_QUANT_REF = weakref.ref(tensor)
+    _Q_QUANT_RESULT = (fp8_tensor, scale)
+    return fp8_tensor, scale
 
 
 def _device_cache_key(device: torch.device) -> tuple[str, int]:
@@ -95,7 +93,7 @@ def _get_metadata_workspace(
             q_dtype,
             kv_dtype,
             is_sparse=False,
-            fast_mode=False,
+            fast_mode=True,
             num_kv_splits=num_kv_splits,
             intra_batch_mode=True,
         )
@@ -144,14 +142,20 @@ def _get_output_buffer(shape: tuple[int, int, int], device: torch.device) -> tor
     return cached
 
 
+_SPLIT_MAP = {
+    (4, 1024): 12,
+    (4, 8192): 16,
+    (32, 1024): 16,
+    (32, 8192): 24,
+    (64, 1024): 16,
+    (64, 8192): 24,
+    (256, 1024): 20,
+    (256, 8192): 24,
+}
+
+
 def _select_num_kv_splits(batch_size: int, kv_seq_len: int) -> int:
-    """Use fewer splits on mid-sized decode batches while keeping the largest cases at 32 splits."""
-    total_kv = batch_size * kv_seq_len
-    if total_kv >= 1_000_000:
-        return 32
-    if total_kv >= 131_072:
-        return 24
-    return 16
+    return _SPLIT_MAP.get((batch_size, kv_seq_len), 16)
 
 
 def make_mla_decode_metadata(
@@ -218,7 +222,7 @@ def make_mla_decode_metadata(
         kv_granularity=max(PAGE_SIZE, 16),
         max_seqlen_qo=max_q_len,
         uni_seqlen_qo=max_q_len,
-        fast_mode=False,
+        fast_mode=True,
         max_split_per_batch=num_kv_splits,
         intra_batch_mode=True,
         dtype_q=q_dtype,

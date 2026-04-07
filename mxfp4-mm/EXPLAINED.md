@@ -1,5 +1,7 @@
 # 📖 MXFP4-MM Implementation Explained
 
+[中文版本](EXPLAINED.zh-CN.md)
+
 ## 🎯 What This Code Does
 
 ```

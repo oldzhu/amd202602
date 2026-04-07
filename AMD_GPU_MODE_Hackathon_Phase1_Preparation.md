@@ -1,6 +1,8 @@
 # AMD x GPU MODE - E2E Model Speedrun Hackathon
 ## Phase 1: Qualifiers - Comprehensive Preparation Guide
 
+[中文版本](AMD_GPU_MODE_Hackathon_Phase1_Preparation.zh-CN.md)
+
 ---
 
 ## 📋 Event Overview

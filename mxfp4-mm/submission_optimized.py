@@ -1,39 +1,12 @@
-"""
-===============================================================================
-MXFP4-MM: Corrected Implementation for AMD GPU MODE Hackathon
-===============================================================================
+"""Experimental MXFP4-MM path for inline HIP compile probing."""
 
-🐛 BUG FIX: The scales must be shuffled with e8m0_shuffle() before passing
-   to gemm_a4w4. This was missing in the original submission!
-
-📋 PROBLEM SUMMARY:
-    Compute C = A @ B.T where:
-    - A: [M, K] bfloat16 activation matrix
-    - B: [N, K] bfloat16 weight matrix (quantized to MXFP4)
-    - Output: [M, N] bfloat16
-
-🔧 KEY FIX:
-    Before (WRONG):
-        A_q, A_scale_sh = dynamic_mxfp4_quant(A)
-        A_q = A_q.view(dtypes.fp4x2)
-        A_scale_sh = A_scale_sh.view(dtypes.fp8_e8m0)  # Not shuffled!
-    
-    After (CORRECT):
-        A_q, A_scale = dynamic_mxfp4_quant(A)
-        A_scale_sh = e8m0_shuffle(A_scale)  # MUST shuffle!
-        A_q = A_q.view(dtypes.fp4x2)
-        A_scale_sh = A_scale_sh.view(dtypes.fp8_e8m0)
-
-⚡ WHY SHUFFLING MATTERS:
-    The gemm_a4w4 kernel expects scales in a specific memory layout
-    that matches the shuffled weights. Without shuffling, the scale
-    values don't align with the correct weight blocks, causing
-    completely wrong results.
-===============================================================================
-"""
+import os
+import sys
+from typing import Any
 
 import torch
 from task import input_t, output_t
+from torch.utils.cpp_extension import load_inline
 
 import aiter
 from aiter import dtypes
@@ -41,94 +14,131 @@ from aiter.ops.triton.quant import dynamic_mxfp4_quant
 from aiter.utility.fp4_utils import e8m0_shuffle
 
 
-SCALE_GROUP_SIZE = 32
+_LOG_KEYS: set[str] = set()
+_HIP_MODULE: Any | None = None
+_HIP_MODULE_STATE = "uninitialized"
+_HIP_PROBE_ATTEMPTED = False
+_CPP_SOURCE = r"""
+#include <torch/extension.h>
+
+void launch_probe(torch::Tensor scratch);
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("launch_probe", &launch_probe, "launch_probe");
+}
+"""
+
+_CUDA_SOURCE = r"""
+#include <torch/extension.h>
+
+#include <cstdint>
+
+#include <hip/hip_runtime.h>
+
+__global__ void probe_kernel(int32_t* scratch) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        scratch[0] = 7;
+    }
+}
+
+void launch_probe(torch::Tensor scratch) {
+    probe_kernel<<<1, 64, 0, 0>>>(reinterpret_cast<int32_t*>(scratch.data_ptr()));
+}
+"""
 
 
-def _quant_mxfp4(x: torch.Tensor, shuffle: bool = True):
-    """
-    Quantize a bf16 tensor to MXFP4 format.
-    
-    This function:
-    1. Calls dynamic_mxfp4_quant to get fp4 data and e8m0 scales
-    2. Shuffles the scales using e8m0_shuffle (for gemm_a4w4 compatibility)
-    3. Views the tensors as AITER's custom dtypes
-    
-    Args:
-        x: [M, K] bfloat16 tensor (K must be divisible by 32)
-        shuffle: Whether to shuffle scales (default: True)
-    
-    Returns:
-        (fp4_data, scale_e8m0) where:
-        - fp4_data: [M, K//2] packed FP4 values
-        - scale_e8m0: [padded, K//32] shuffled E8M0 scales
-    """
-    # Step 1: Quantize to MXFP4
-    x_fp4, bs_e8m0 = dynamic_mxfp4_quant(x)
-    
-    # Step 2: Shuffle scales for gemm_a4w4
-    # This rearranges the scale values to match the shuffled weight layout
-    if shuffle:
-        bs_e8m0 = e8m0_shuffle(bs_e8m0)
-    
-    # Step 3: View as AITER dtypes
-    return x_fp4.view(dtypes.fp4x2), bs_e8m0.view(dtypes.fp8_e8m0)
+def _log_once(key: str, message: str) -> None:
+    if key in _LOG_KEYS:
+        return
+    _LOG_KEYS.add(key)
+    print(f"[mxfp4-mm hip] {message}", file=sys.stderr)
+
+
+def _quant_mxfp4(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    x_fp4, x_scale = dynamic_mxfp4_quant(x)
+    x_scale = e8m0_shuffle(x_scale)
+    return x_fp4.view(dtypes.fp4x2), x_scale.view(dtypes.fp8_e8m0)
+
+
+def _baseline_gemm(
+    a_q: torch.Tensor,
+    b_shuffle: torch.Tensor,
+    a_scale_sh: torch.Tensor,
+    b_scale_sh: torch.Tensor,
+) -> torch.Tensor:
+    return aiter.gemm_a4w4(
+        a_q,
+        b_shuffle,
+        a_scale_sh,
+        b_scale_sh,
+        dtype=dtypes.bf16,
+        bpreshuffle=True,
+    )
+
+
+def _get_hip_module() -> Any:
+    global _HIP_MODULE
+    global _HIP_MODULE_STATE
+
+    if _HIP_MODULE is not None:
+        return _HIP_MODULE
+    if _HIP_MODULE_STATE == "failed":
+        raise RuntimeError("inline HIP module initialization already failed")
+
+    os.environ.setdefault("PYTORCH_ROCM_ARCH", "gfx942")
+    os.environ.setdefault("CXX", "clang++")
+
+    try:
+        _HIP_MODULE = load_inline(
+            name="mxfp4_mm_hip_launch_probe_v2",
+            cpp_sources=[_CPP_SOURCE],
+            cuda_sources=[_CUDA_SOURCE],
+            functions=None,
+            extra_cuda_cflags=["--offload-arch=gfx942", "-std=c++20"],
+            verbose=False,
+            with_cuda=True,
+        )
+    except Exception:
+        _HIP_MODULE_STATE = "failed"
+        raise
+
+    _HIP_MODULE_STATE = "ready"
+    _log_once("hip-compile", "inline HIP compile-probe module compiled successfully")
+    return _HIP_MODULE
+
+
+def _probe_inline_hip_compile(a_q: torch.Tensor, b_shuffle: torch.Tensor) -> None:
+    global _HIP_PROBE_ATTEMPTED
+    if _HIP_PROBE_ATTEMPTED:
+        return
+    _HIP_PROBE_ATTEMPTED = True
+
+    shape_text = f"M={a_q.shape[0]} N={b_shuffle.shape[0]} K={a_q.shape[1] * 2}"
+
+    try:
+        module = _get_hip_module()
+    except Exception as exc:
+        _log_once(
+            "hip-compile-failed",
+            f"inline HIP compile probe unavailable for {shape_text}: {type(exc).__name__}: {exc}",
+        )
+        return
+
+    _log_once(
+        "hip-launch-skipped",
+        f"inline HIP compile probe succeeded for {shape_text}; launch is intentionally skipped because even the scratch-only launch path times out remotely",
+    )
+
+    del module
 
 
 def custom_kernel(data: input_t) -> output_t:
-    """
-    MXFP4 Matrix Multiplication: C = A @ B.T
-    
-    Input:
-        data = (A, B, B_q, B_shuffle, B_scale_sh)
-        
-        A:            [M, K] bf16 - Activation matrix
-        B:            [N, K] bf16 - Weight matrix (reference)
-        B_q:          [N, K//2] fp4x2 - Quantized B (raw)
-        B_shuffle:    [N, K//2] fp4x2 - Pre-shuffled quantized B
-        B_scale_sh:   [padded, flat] e8m0 - Pre-shuffled scales for B
-    
-    Output:
-        C: [M, N] bf16 - Result matrix
-    """
-    A, B, B_q, B_shuffle, B_scale_sh = data
-    
-    M, K = A.shape
-    N = B.shape[0]
-    
-    # Ensure A is contiguous for optimal memory access
-    A = A.contiguous()
-    
-    # ============================================================
-    # Step 1: Quantize activation A to MXFP4
-    # ============================================================
-    # This is the key fix: scales MUST be shuffled!
-    A_q, A_scale_sh = _quant_mxfp4(A, shuffle=True)
-    
-    # ============================================================
-    # Step 2: Call AITER's gemm_a4w4 kernel
-    # ============================================================
-    output = aiter.gemm_a4w4(
-        A_q,                    # [M, K//2] quantized activation
-        B_shuffle,              # [N, K//2] pre-shuffled quantized weight
-        A_scale_sh,             # [padded, K//32] shuffled activation scales
-        B_scale_sh,             # [padded, K//32] shuffled weight scales
-        dtype=dtypes.bf16,      # Output in bfloat16
-        bpreshuffle=True,       # B_shuffle is already shuffled
-    )
-    
-    # Slice to actual dimensions (output may be padded)
-    return output[:M, :N]
+    a, _, _, b_shuffle, b_scale_sh = data
 
+    if not a.is_contiguous():
+        a = a.contiguous()
 
-# ============================================================================
-# TESTING
-# ============================================================================
-if __name__ == "__main__":
-    print("=" * 60)
-    print("MXFP4-MM Corrected Implementation")
-    print("=" * 60)
-    print()
-    print("Key fix: Added e8m0_shuffle() for activation scales")
-    print()
-    print("Submit via:")
-    print("  popcorn-cli submit --gpu MI355X --leaderboard amd-mxfp4-mm --mode test submission_clean.py")
+    a_q, a_scale_sh = _quant_mxfp4(a)
+    output = _baseline_gemm(a_q, b_shuffle, a_scale_sh, b_scale_sh)
+    _probe_inline_hip_compile(a_q, b_shuffle)
+    return output

@@ -1,5 +1,7 @@
 # AGENTS.md - AMD GPU MODE Hackathon Phase 1 Agent Guide
 
+[中文版本](AGENTS.zh-CN.md)
+
 ## Project Overview
 
 This workspace targets the AMD x GPU MODE E2E Model Speedrun Phase 1 qualifiers.
@@ -97,6 +99,13 @@ Useful review checklist for submissions:
 ## Documentation Requirements
 
 Every performance-oriented code change must update that problem's `PROGRESS.md` in both English and Chinese.
+
+For general project documentation outside `PROGRESS.md`:
+
+- Keep an English source file plus a Chinese companion file with the same base name and `.zh-CN.md` suffix.
+- Add a link near the top of each pair so the English and Chinese documents point to each other.
+- When one side is updated materially, update the companion document in the same change when practical.
+- A single-file bilingual exception is allowed for `PROGRESS.md`, which should remain bilingual in one file unless the project structure changes intentionally.
 
 Each change entry must include:
 

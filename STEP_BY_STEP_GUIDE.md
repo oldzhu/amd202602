@@ -1,5 +1,7 @@
 # 🚀 Step-by-Step Guide: AMD GPU MODE Hackathon Phase 1
 
+[中文版本](STEP_BY_STEP_GUIDE.zh-CN.md)
+
 ## 📋 Overview
 
 This guide will walk you through the entire process of participating in Phase 1 of the AMD x GPU MODE Hackathon.
